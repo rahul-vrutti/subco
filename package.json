@@ -1,0 +1,12 @@
+{
+  "name": "subco",
+  "version": "1.0.0",
+  "description": "MQTT client for handling file updates and version management",
+  "main": "subco.js",
+  "scripts": {
+    "start": "node subco.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.14.1"
+  }
+}
