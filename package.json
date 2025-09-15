@@ -7,6 +7,7 @@
     "start": "node subco.js"
   },
   "dependencies": {
+    "express": "^4.21.2",
     "mqtt": "^5.14.1"
   }
 }
