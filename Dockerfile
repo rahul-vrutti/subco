@@ -16,7 +16,7 @@ COPY . .
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
-ENV MQTT_BROKER_URL=mqtt://mqtt:1883
+ENV MQTT_BROKER_URL=mqtt://100.103.254.213:1883
 
 # Create a non-root user to run the application
 RUN addgroup -g 1001 -S nodejs
