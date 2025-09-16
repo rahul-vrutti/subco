@@ -29,5 +29,12 @@ USER subco
 # Expose port (if needed for health checks or monitoring)
 EXPOSE 3000
 
-# Define the command to run the application
-CMD ["npm", "start"]
+# Give Docker a graceful stop window (used by Watchtower)
+STOPSIGNAL SIGTERM
+
+# Optional: healthcheck so Watchtower/Docker know it's healthy before/after restart
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:3000/health || exit 1
+
+# Run Node directly
+CMD ["node", "subco.js"]
