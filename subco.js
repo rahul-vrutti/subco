@@ -170,3 +170,32 @@ client.on('message', (topic, message) => {
 app.listen(PORT, () => {
     console.log(`🚀 Express server started on port ${PORT}`);
 });
+
+
+// near top where you define `app`, `server`, `client` (mqtt client)
+function shutdown(signal) {
+    console.log(`[shutdown] received ${signal}, closing gracefully...`);
+    try {
+        if (client) {
+            // end(true) closes immediately; end(false) waits to drain
+            client.end(false, () => console.log('[shutdown] MQTT closed'));
+        }
+    } catch { }
+    try {
+        if (server) {
+            server.close(() => {
+                console.log('[shutdown] HTTP server closed');
+                process.exit(0);
+            });
+            // safety timeout in case close hangs
+            setTimeout(() => process.exit(0), 8000).unref();
+        } else {
+            setTimeout(() => process.exit(0), 2000).unref();
+        }
+    } catch {
+        process.exit(0);
+    }
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
