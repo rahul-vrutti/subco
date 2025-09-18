@@ -36,13 +36,39 @@ async function getCurrentRunningImageVersion() {
     try {
         console.log('🔍 Detecting current running subco image version...');
 
+        // Add a small delay to ensure container is fully registered
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
         // Try to find the running container by service name (subco)
         const { stdout: containersOutput } = await execPromise(
             `docker ps --format "{{.Names}}\t{{.Image}}" | grep -i subco || echo "not_found"`
         );
 
         if (containersOutput.includes('not_found') || !containersOutput.trim()) {
-            console.log('No running subco container found');
+            console.log('No running subco container found, trying alternative method...');
+
+            // Try to get the current container ID from /proc/self/cgroup
+            try {
+                const { stdout: cgroupOutput } = await execPromise('cat /proc/self/cgroup | head -1 || echo "no_cgroup"');
+                if (cgroupOutput.includes('docker') || cgroupOutput.includes('/')) {
+                    // We're running inside a container, try to get image info from environment or docker inspect
+                    const hostname = process.env.HOSTNAME;
+                    if (hostname) {
+                        try {
+                            const { stdout: inspectOutput } = await execPromise(`docker inspect ${hostname} --format="{{.Config.Image}}" || echo "inspect_failed"`);
+                            if (inspectOutput && !inspectOutput.includes('inspect_failed')) {
+                                console.log(`Detected image from container inspection: ${inspectOutput.trim()}`);
+                                return inspectOutput.trim();
+                            }
+                        } catch (inspectError) {
+                            console.log('Container inspection failed:', inspectError.message);
+                        }
+                    }
+                }
+            } catch (cgroupError) {
+                console.log('Cgroup detection failed:', cgroupError.message);
+            }
+
             return 'not-running';
         }
 
@@ -60,9 +86,7 @@ async function getCurrentRunningImageVersion() {
         console.error('Error detecting subco image version:', error.message);
         return 'detection-failed';
     }
-}
-
-// Function to initialize subco version information
+}// Function to initialize subco version information
 async function initializeSubcoVersions() {
     try {
         console.log('🔍 Initializing subco with current running image version...');
@@ -167,7 +191,7 @@ app.get('/image-versions', (req, res) => {
     });
 });
 
-client.on('connect', () => {
+client.on('connect', async () => {
     console.log('✅ Subco successfully connected to MQTT broker');
     console.log('Connection details:', {
         brokerUrl: brokerUrl,
@@ -192,10 +216,22 @@ client.on('connect', () => {
         }
     });
 
+    // Initialize version information after MQTT connection
+    console.log('🔍 Detecting image version after MQTT connection...');
+    await initializeSubcoVersions();
+
+    // Set up periodic version refresh for cases where initial detection fails
+    setInterval(async () => {
+        if (version === 'not-running' || version === 'detection-failed' || currentImageVersion === 'not-running' || currentImageVersion === 'detection-failed') {
+            console.log('🔄 Retrying image version detection...');
+            await initializeSubcoVersions();
+        }
+    }, 60000); // Retry every 60 seconds if detection failed
+
     // Start publishing device status every 30 seconds
     console.log('🚀 Starting device status publishing every 30 seconds...');
 
-    // Publish immediately upon connection
+    // Publish immediately upon connection (after version detection)
     publishDeviceStatus();
 
     // Set up interval for publishing device status
@@ -325,14 +361,10 @@ client.on('message', (topic, message) => {
 });
 
 // Start Express server
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
     console.log(`🚀 Express server started on port ${PORT}`);
-
-    // Initialize subco with current running image version
-    await initializeSubcoVersions();
+    console.log('ℹ️ Image version detection will occur after MQTT connection');
 });
-
-
 // near top where you define `app`, `server`, `client` (mqtt client)
 function shutdown(signal) {
     console.log(`[shutdown] received ${signal}, closing gracefully...`);
