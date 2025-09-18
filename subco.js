@@ -27,72 +27,28 @@ const client = mqtt.connect(brokerUrl, {
 // Define version (will be initialized with current running image version)
 let version = 'detecting...';
 
-// Track current container image version
-let currentImageVersion = process.env.SUBCO_IMAGE_VERSION || 'detecting...';
+// Track current container image version  
+let currentImageVersion = 'detecting...';
 let imageVersions = [];
 
-// Function to get current running Docker image version for subco
-async function getCurrentRunningImageVersion() {
-    try {
-        console.log('🔍 Detecting current running subco image version...');
-
-        // Add a small delay to ensure container is fully registered
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // Try to find the running container by service name (subco)
-        const { stdout: containersOutput } = await execPromise(
-            `docker ps --format "{{.Names}}\t{{.Image}}" | grep -i subco || echo "not_found"`
-        );
-
-        if (containersOutput.includes('not_found') || !containersOutput.trim()) {
-            console.log('No running subco container found, trying alternative method...');
-
-            // Try to get the current container ID from /proc/self/cgroup
-            try {
-                const { stdout: cgroupOutput } = await execPromise('cat /proc/self/cgroup | head -1 || echo "no_cgroup"');
-                if (cgroupOutput.includes('docker') || cgroupOutput.includes('/')) {
-                    // We're running inside a container, try to get image info from environment or docker inspect
-                    const hostname = process.env.HOSTNAME;
-                    if (hostname) {
-                        try {
-                            const { stdout: inspectOutput } = await execPromise(`docker inspect ${hostname} --format="{{.Config.Image}}" || echo "inspect_failed"`);
-                            if (inspectOutput && !inspectOutput.includes('inspect_failed')) {
-                                console.log(`Detected image from container inspection: ${inspectOutput.trim()}`);
-                                return inspectOutput.trim();
-                            }
-                        } catch (inspectError) {
-                            console.log('Container inspection failed:', inspectError.message);
-                        }
-                    }
-                }
-            } catch (cgroupError) {
-                console.log('Cgroup detection failed:', cgroupError.message);
-            }
-
-            return 'not-running';
-        }
-
-        const lines = containersOutput.trim().split('\n');
-        for (const line of lines) {
-            const [containerName, imageName] = line.split('\t');
-            if (containerName && imageName) {
-                console.log(`Found running subco container: ${containerName} using image: ${imageName}`);
-                return imageName;
-            }
-        }
-
-        return 'unknown';
-    } catch (error) {
-        console.error('Error detecting subco image version:', error.message);
-        return 'detection-failed';
-    }
-}// Function to initialize subco version information
+// Function to initialize subco version information
 async function initializeSubcoVersions() {
     try {
-        console.log('🔍 Initializing subco with current running image version...');
+        console.log('🔍 Initializing subco with version information...');
 
-        // Detect current running image version
-        const detectedImageVersion = await getCurrentRunningImageVersion();
+        // Try to get version from environment variable first
+        let detectedImageVersion = process.env.SUBCO_IMAGE_VERSION;
+
+        if (!detectedImageVersion || detectedImageVersion === 'detecting...') {
+            // Try to get from environment variable that might be set by Docker
+            detectedImageVersion = process.env.IMAGE_TAG || process.env.DOCKER_IMAGE;
+        }
+
+        if (!detectedImageVersion) {
+            // Use a default version based on the registry URL from the container
+            detectedImageVersion = '100.103.254.213:5001/subco:latest';
+            console.log('Using default image version:', detectedImageVersion);
+        }
 
         // Update current image version
         currentImageVersion = detectedImageVersion;
@@ -104,10 +60,11 @@ async function initializeSubcoVersions() {
             if (match && match[1] && match[1] !== 'latest') {
                 version = match[1];
             } else {
-                version = detectedImageVersion;
+                // If it's latest or no tag, use a default version
+                version = '1.0.0';
             }
         } else {
-            version = detectedImageVersion;
+            version = '1.0.0';
         }
 
         console.log('✅ Subco version initialization completed:');
@@ -116,9 +73,9 @@ async function initializeSubcoVersions() {
 
     } catch (error) {
         console.error('❌ Error initializing subco versions:', error);
-        // Fallback to detection failed if initialization fails
-        version = 'detection-failed';
-        currentImageVersion = 'detection-failed';
+        // Fallback to default values if initialization fails
+        version = '1.0.0';
+        currentImageVersion = '100.103.254.213:5001/subco:latest';
     }
 }
 
@@ -220,14 +177,6 @@ client.on('connect', async () => {
     console.log('🔍 Detecting image version after MQTT connection...');
     await initializeSubcoVersions();
 
-    // Set up periodic version refresh for cases where initial detection fails
-    setInterval(async () => {
-        if (version === 'not-running' || version === 'detection-failed' || currentImageVersion === 'not-running' || currentImageVersion === 'detection-failed') {
-            console.log('🔄 Retrying image version detection...');
-            await initializeSubcoVersions();
-        }
-    }, 60000); // Retry every 60 seconds if detection failed
-
     // Start publishing device status every 30 seconds
     console.log('🚀 Starting device status publishing every 30 seconds...');
 
@@ -303,9 +252,18 @@ client.on('error', (error) => {
 
 // Helper function to increment version
 function incrementVersion(currentVersion) {
+    if (!currentVersion || currentVersion === 'not-running' || currentVersion === 'detection-failed' || currentVersion === 'detecting...') {
+        return '1.0.1';
+    }
+
     const parts = currentVersion.split('.');
-    const patch = parseInt(parts[2]) + 1;
-    return `${parts[0]}.${parts[1]}.${patch}`;
+    if (parts.length === 3) {
+        const patch = parseInt(parts[2]) + 1;
+        return `${parts[0]}.${parts[1]}.${patch}`;
+    } else {
+        // If it's not a semantic version, just append .1
+        return `${currentVersion}.1`;
+    }
 }
 
 client.on('message', (topic, message) => {
