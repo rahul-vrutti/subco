@@ -3,13 +3,13 @@ const express = require('express');
 
 // Express app setup
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // Middleware
 app.use(express.json());
 
 // MQTT client setup with enhanced configuration
-const brokerUrl = process.env.MQTT_BROKER_URL;
+const brokerUrl = process.env.MQTT_BROKER_URL || 'mqtt://100.103.254.213:1883';
 console.log('brokerUrl: ', brokerUrl);
 console.log('Attempting to connect to MQTT broker...');
 
@@ -22,6 +22,10 @@ const client = mqtt.connect(brokerUrl, {
 
 // Define version (will be incremented when updates are received)
 let version = '1.0.0';
+
+// Track current container image version
+let currentImageVersion = process.env.SUBCO_IMAGE_VERSION || 'unknown';
+let imageVersions = [];
 
 // Helper functions to get device information
 function getLocalIPAddress() {
@@ -41,6 +45,8 @@ function getDeviceStatus() {
         ip: getLocalIPAddress(),
         mac: getMACAddress(),
         version: version,
+        containerImageVersion: currentImageVersion,
+        availableImageVersions: imageVersions,
         timestamp: new Date().toISOString(),
         uptime: process.uptime()
     };
@@ -74,6 +80,18 @@ app.get('/health', (req, res) => {
             brokerUrl: brokerUrl
         },
         uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+    });
+});
+
+app.get('/device-status', (req, res) => {
+    res.json(getDeviceStatus());
+});
+
+app.get('/image-versions', (req, res) => {
+    res.json({
+        currentImageVersion: currentImageVersion,
+        availableImageVersions: imageVersions,
         timestamp: new Date().toISOString()
     });
 });
@@ -194,6 +212,19 @@ client.on('message', (topic, message) => {
                 // Parse the file information from buco
                 const fileInfo = JSON.parse(message.toString());
                 console.log('📨 Received file update:', fileInfo);
+
+                // Update available image versions if provided
+                if (fileInfo.imageVersions && Array.isArray(fileInfo.imageVersions)) {
+                    imageVersions = fileInfo.imageVersions;
+                    console.log('✅ Updated available image versions:', imageVersions);
+
+                    // Find and set current subco image version
+                    const subcoImage = imageVersions.find(img => img.includes('subco'));
+                    if (subcoImage) {
+                        currentImageVersion = subcoImage;
+                        console.log(`✅ Updated current container image version to: ${currentImageVersion}`);
+                    }
+                }
 
                 // Check if specific subco version is provided
                 if (fileInfo.versions && fileInfo.versions.subcoVersion) {
