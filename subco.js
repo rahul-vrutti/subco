@@ -1,5 +1,9 @@
 const mqtt = require('mqtt');
 const express = require('express');
+const { exec } = require('child_process');
+const util = require('util');
+
+const execPromise = util.promisify(exec);
 
 // Express app setup
 const app = express();
@@ -20,12 +24,79 @@ const client = mqtt.connect(brokerUrl, {
     keepalive: 60
 });
 
-// Define version (will be incremented when updates are received)
-let version = '1.0.0';
+// Define version (will be initialized with current running image version)
+let version = 'detecting...';
 
 // Track current container image version
-let currentImageVersion = process.env.SUBCO_IMAGE_VERSION || 'unknown';
+let currentImageVersion = process.env.SUBCO_IMAGE_VERSION || 'detecting...';
 let imageVersions = [];
+
+// Function to get current running Docker image version for subco
+async function getCurrentRunningImageVersion() {
+    try {
+        console.log('🔍 Detecting current running subco image version...');
+
+        // Try to find the running container by service name (subco)
+        const { stdout: containersOutput } = await execPromise(
+            `docker ps --format "{{.Names}}\t{{.Image}}" | grep -i subco || echo "not_found"`
+        );
+
+        if (containersOutput.includes('not_found') || !containersOutput.trim()) {
+            console.log('No running subco container found');
+            return 'not-running';
+        }
+
+        const lines = containersOutput.trim().split('\n');
+        for (const line of lines) {
+            const [containerName, imageName] = line.split('\t');
+            if (containerName && imageName) {
+                console.log(`Found running subco container: ${containerName} using image: ${imageName}`);
+                return imageName;
+            }
+        }
+
+        return 'unknown';
+    } catch (error) {
+        console.error('Error detecting subco image version:', error.message);
+        return 'detection-failed';
+    }
+}
+
+// Function to initialize subco version information
+async function initializeSubcoVersions() {
+    try {
+        console.log('🔍 Initializing subco with current running image version...');
+
+        // Detect current running image version
+        const detectedImageVersion = await getCurrentRunningImageVersion();
+
+        // Update current image version
+        currentImageVersion = detectedImageVersion;
+
+        // For the service version, extract a clean version if possible
+        if (detectedImageVersion && detectedImageVersion !== 'not-running' && detectedImageVersion !== 'detection-failed') {
+            // Try to extract version from image tag (e.g., subco:v2.1.0 -> v2.1.0)
+            const match = detectedImageVersion.match(/:(.+)$/);
+            if (match && match[1] && match[1] !== 'latest') {
+                version = match[1];
+            } else {
+                version = detectedImageVersion;
+            }
+        } else {
+            version = detectedImageVersion;
+        }
+
+        console.log('✅ Subco version initialization completed:');
+        console.log(`   Service version: ${version}`);
+        console.log(`   Container image version: ${currentImageVersion}`);
+
+    } catch (error) {
+        console.error('❌ Error initializing subco versions:', error);
+        // Fallback to detection failed if initialization fails
+        version = 'detection-failed';
+        currentImageVersion = 'detection-failed';
+    }
+}
 
 // Helper functions to get device information
 function getLocalIPAddress() {
@@ -254,8 +325,11 @@ client.on('message', (topic, message) => {
 });
 
 // Start Express server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`🚀 Express server started on port ${PORT}`);
+
+    // Initialize subco with current running image version
+    await initializeSubcoVersions();
 });
 
 
