@@ -23,6 +23,29 @@ const client = mqtt.connect(brokerUrl, {
 // Define version (will be incremented when updates are received)
 let version = '1.0.0';
 
+// Helper functions to get device information
+function getLocalIPAddress() {
+    const envIP = process.env.SUBCO_IP || 'undefined';
+    console.log('envIP: ', envIP);
+    return envIP;
+}
+
+function getMACAddress() {
+    const envMAC = process.env.SUBCO_MAC || 'undefined';
+    console.log('envMAC: ', envMAC);
+    return envMAC;
+}
+
+function getDeviceStatus() {
+    return {
+        ip: getLocalIPAddress(),
+        mac: getMACAddress(),
+        version: version,
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    };
+}
+
 // Express API endpoints
 app.get('/', (req, res) => {
     res.json({
@@ -79,7 +102,40 @@ client.on('connect', () => {
             console.log('✅ Successfully subscribed to /newUpdate');
         }
     });
+
+    // Start publishing device status every 30 seconds
+    console.log('🚀 Starting device status publishing every 30 seconds...');
+
+    // Publish immediately upon connection
+    publishDeviceStatus();
+
+    // Set up interval for publishing device status
+    setInterval(() => {
+        if (client.connected) {
+            publishDeviceStatus();
+        } else {
+            console.log('⚠️ MQTT client not connected, skipping device status publish');
+        }
+    }, 30 * 1000); // 30 seconds
 });
+
+// Function to publish device status
+function publishDeviceStatus() {
+    try {
+        const deviceStatus = getDeviceStatus();
+        const message = JSON.stringify(deviceStatus);
+
+        client.publish('/DeviceStatus', message, (err) => {
+            if (err) {
+                console.error('❌ Failed to publish device status:', err);
+            } else {
+                console.log(`📤 Published device status: IP=${deviceStatus.ip}, MAC=${deviceStatus.mac}, Version=${deviceStatus.version}`);
+            }
+        });
+    } catch (error) {
+        console.error('❌ Error creating device status message:', error);
+    }
+}
 
 client.on('reconnect', () => {
     console.log('🔄 MQTT client attempting to reconnect...');
